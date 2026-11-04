@@ -33,16 +33,19 @@
   function scan() {
     pending = false;
     if(!connected())return;
-    for (const video of document.querySelectorAll('video')) {
+    const mediaElements = [...(document.querySelectorAll('video') || []), ...(document.querySelectorAll('audio') || [])];
+    for (const video of mediaElements) {
       if (seen.has(video)) continue;
       seen.add(video);
+      const isAudio = video.tagName?.toLowerCase() === 'audio';
+      const label = isAudio ? 'audio' : 'video';
       const host = document.createElement('div');
       host.style.cssText = 'position:fixed;z-index:2147483647;display:none;pointer-events:auto';
       const shadow = host.attachShadow({mode:'closed'});
-      shadow.innerHTML = '<style>:host{font:12px "Segoe UI",Tahoma,sans-serif;color:#17364b}.bar{display:flex;justify-content:flex-end;align-items:stretch}.download,.dismiss{font:12px "Segoe UI",Tahoma,sans-serif;background:linear-gradient(#f7fcff,#c6e2f5);color:#17364b;border:1px solid #719ab7;cursor:default;box-shadow:0 1px 3px #0003;height:27px}.download{border-radius:3px 0 0 3px;padding:3px 9px}.dismiss{width:24px;padding:0;border-left:0;border-radius:0 3px 3px 0;font-size:16px;line-height:20px}.download:hover,.dismiss:hover{background:linear-gradient(#fff,#acd4ef)}.dismiss:hover{color:#8d1c18}.download:disabled{opacity:.65}.chooser{position:fixed;background:#fafafa;color:#222;padding:5px;border:1px solid #8b8b8b;border-radius:2px;width:min(410px,calc(100vw - 10px));box-shadow:2px 3px 8px #0005;max-height:min(330px,55vh);overflow:auto}.chooser p{margin:4px 6px 7px;line-height:1.4}.row{display:block;width:100%;text-align:left;background:transparent;border:0;border-radius:0;box-shadow:none;padding:5px 7px;font:12px "Segoe UI",Tahoma,sans-serif;color:#001845;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.row:hover:not(:disabled),.row:focus-visible{background:#dceeff;outline:1px dotted #315b75;outline-offset:-2px}.row:disabled{color:#8a8a8a}</style><div class="bar"><button class="download" type="button">↓ Download this video ▾</button><button class="dismiss" type="button" title="Hide this download panel" aria-label="Hide this download panel">×</button></div>';
+      shadow.innerHTML = `<style>:host{font:12px "Segoe UI Variable Text",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#f8fafc}.bar{display:flex;justify-content:flex-end;align-items:stretch}.download,.dismiss{font:12px "Segoe UI Variable Text",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:rgba(18,22,29,0.90);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);color:#f8fafc;border:1px solid rgba(255,255,255,0.14);cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,0.45);height:28px;transition:all 140ms ease}.download{border-radius:6px 0 0 6px;padding:3px 10px;font-weight:550;letter-spacing:-0.01em}.dismiss{width:26px;padding:0;border-left:0;border-radius:0 6px 6px 0;font-size:16px;line-height:26px;color:#94a3b8}.download:hover,.dismiss:hover{background:rgba(28,34,46,0.98);border-color:rgba(255,255,255,0.25)}.dismiss:hover{color:#f87171}.download:disabled{opacity:.5;cursor:not-allowed}.chooser{position:fixed;background:rgba(18,22,29,0.94);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);color:#f8fafc;padding:6px;border:1px solid rgba(255,255,255,0.15);border-radius:8px;width:min(420px,calc(100vw - 10px));box-shadow:0 18px 48px rgba(0,0,0,0.65);max-height:min(340px,55vh);overflow:auto}.chooser p{margin:6px 8px 8px;line-height:1.4;font-size:11.5px;color:#94a3b8}.row{display:block;width:100%;text-align:left;background:transparent;border:1px solid transparent;border-radius:4px;box-shadow:none;padding:6px 10px;font:12px "SF Mono","Segoe UI Variable Text",monospace;color:#f8fafc;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;transition:all 120ms ease}.row:hover:not(:disabled),.row:focus-visible{background:rgba(56,189,248,0.12);border-color:rgba(56,189,248,0.30);color:#38bdf8;outline:none}.row:disabled{color:#64748b;cursor:not-allowed}</style><div class="bar"><button class="download" type="button">↓ Download this ${label} ▾</button><button class="dismiss" type="button" title="Hide this download panel" aria-label="Hide this download panel">×</button></div>`;
       const button = shadow.querySelector('.download');
       const dismiss = shadow.querySelector('.dismiss');
-      const record = {video, host, shadow, dismissed:false}; records.add(record);
+      const record = {video, host, shadow, isAudio, dismissed:false}; records.add(record);
       resizeObserver.observe(video);
       document.documentElement.appendChild(host);
       const report = () => {
@@ -120,7 +123,8 @@
       const parent=fullscreen && fullscreen !== record.video && fullscreen.contains(record.video) ? fullscreen : document.documentElement;
       if(record.host.parentNode !== parent) parent.appendChild(record.host);
       const rect = record.video.getBoundingClientRect();
-      const visible = !scrolling && !record.dismissed && rect.width > 100 && rect.height > 60 && rect.top >= 0 && rect.top < innerHeight-30 && rect.right > 0 && rect.left < innerWidth;
+      const minHeight = record.isAudio ? 24 : 60;
+      const visible = !scrolling && !record.dismissed && rect.width > 80 && rect.height >= minHeight && rect.top >= 0 && rect.top < innerHeight-30 && rect.right > 0 && rect.left < innerWidth;
       record.host.style.display = visible ? 'block' : 'none';
       if(!visible)continue;
       const width = record.host.offsetWidth || 180, height = record.host.offsetHeight || 27;

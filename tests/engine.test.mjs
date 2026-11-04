@@ -19,7 +19,7 @@ async function fixture(t, options = {}) {
     if (req.url === '/redirect') { res.writeHead(302, { location: '/file.bin' }); return res.end(); }
     if (req.url === '/missing') { res.writeHead(404); return res.end(); }
     const noRange = req.url === '/plain';
-    res.setHeader('etag', options.etag || '"fixture-1"');
+    if (options.etag !== null) res.setHeader('etag', options.etag || '"fixture-1"');
     if (options.disposition) res.setHeader('content-disposition', options.disposition);
     if (!noRange) res.setHeader('accept-ranges', 'bytes');
     let start = 0, end = data.length - 1;
@@ -497,4 +497,50 @@ test('request credentials are excluded from history and UI snapshots', async t =
   await f.engine.add({ url: `${f.url}/file.bin`, reviewOnly: true, headers: { cookie: 'session=private-fixture', authorization: 'Bearer private-fixture' } });
   assert.doesNotMatch(JSON.stringify(f.engine.snapshot()), /private-fixture/);
   assert.doesNotMatch(await fs.readFile(path.join(f.root, 'state', 'downloads.json'), 'utf8'), /private-fixture/);
+});
+
+test('resume succeeds on range-capable servers when validator is absent', async t => {
+  const f = await fixture(t, { slow: true, etag: null });
+  const [id] = await f.engine.add({ url: `${f.url}/file.bin` });
+  const d = f.engine.downloads[0];
+  await until(() => d.downloaded > 150000);
+  await f.engine.action(id, 'pause');
+  assert.equal(d.validator, null);
+  assert.equal(d.resumable, true);
+  await f.engine.action(id, 'resume');
+  await until(() => ['complete', 'error'].includes(d.status));
+  assert.equal(d.status, 'complete', d.error);
+  assert.equal(d.notice, null);
+  assert.equal(digest(await fs.readFile(d.path)), digest(f.data));
+});
+
+test('postCompleteAction settings validate allowed values atomically', async t => {
+  const f = await fixture(t);
+  assert.equal(f.engine.settings.postCompleteAction, 'none');
+  await f.engine.updateSettings({ postCompleteAction: 'shutdown' });
+  assert.equal(f.engine.settings.postCompleteAction, 'shutdown');
+  await f.engine.updateSettings({ postCompleteAction: 'sleep' });
+  assert.equal(f.engine.settings.postCompleteAction, 'sleep');
+  assert.throws(() => f.engine.updateSettings({ postCompleteAction: 'invalid' }), /Invalid postCompleteAction/);
+});
+
+test('theme settings validate allowed values atomically', async t => {
+  const f = await fixture(t);
+  assert.equal(f.engine.settings.theme, 'light');
+  await f.engine.updateSettings({ theme: 'dark' });
+  assert.equal(f.engine.settings.theme, 'dark');
+  await f.engine.updateSettings({ theme: 'system' });
+  assert.equal(f.engine.settings.theme, 'system');
+  assert.throws(() => f.engine.updateSettings({ theme: 'neon' }), /Invalid theme/);
+  assert.equal(f.engine.settings.theme, 'system');
+});
+
+
+test('add allows native audio output formats m4a and opus and rejects unknown formats', async t => {
+  const f = await fixture(t);
+  await f.engine.add({ url: `${f.url}/file.bin`, outputFormat: 'm4a', queueOnly: true });
+  assert.equal(f.engine.downloads[0].outputFormat, 'm4a');
+  await f.engine.add({ url: `${f.url}/file.bin`, outputFormat: 'opus', queueOnly: true });
+  assert.equal(f.engine.downloads[1].outputFormat, 'opus');
+  await assert.rejects(f.engine.add({ url: `${f.url}/file.bin`, outputFormat: 'wav' }), /Invalid output format/);
 });

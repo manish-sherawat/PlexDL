@@ -126,9 +126,10 @@ if (process.argv.includes('--native-host')) {
       const integrationInfo = () => ({ port: bridge?.port || null, connectedBrowsers, browsers, connectionError, extensionPath: path.join(integrationRoot, 'extension'), integrationPath: path.join(integrationRoot, 'integration'), packaged: app.isPackaged, executable: app.getPath('exe') });
       const snapshot = () => ({ ...engine.snapshot(), integration: integrationInfo(), fileIcons: fileIcons.snapshot() });
       const shutdownServices = () => shutdownPromise ||= Promise.resolve().then(() => bridge?.close()).then(() => engine?.close());
+      const themeBg = () => engine.settings.theme === 'dark' ? '#0a0d14' : '#f8fafc';
       const openIntegrationWindow = async () => {
         if (integrationWindow && !integrationWindow.isDestroyed()) { showProgress(integrationWindow); return; }
-        integrationWindow = new BrowserWindow({show:false,width:700,height:620,minWidth:620,minHeight:480,title:'Browser integration',icon:appIconPath,backgroundColor:'#f0f0f0',autoHideMenuBar:true,webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
+        integrationWindow = new BrowserWindow({show:false,width:700,height:620,minWidth:440,minHeight:380,title:'Browser integration',icon:appIconPath,backgroundColor:themeBg(),autoHideMenuBar:true,webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
         integrationWindow.setMenu(null);
         integrationWindow.webContents.setWindowOpenHandler(()=>({action:'deny'}));
         integrationWindow.webContents.on('will-navigate',event=>event.preventDefault());
@@ -138,8 +139,11 @@ if (process.argv.includes('--native-host')) {
       };
       const openOptionsWindow = async () => {
         if (optionsWindow && !optionsWindow.isDestroyed()) { showProgress(optionsWindow); return; }
-        optionsWindow = new BrowserWindow({show:false,width:540,height:650,minWidth:500,minHeight:500,title:'Options',icon:appIconPath,backgroundColor:'#f0f0f0',autoHideMenuBar:true,webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
+        optionsWindow = new BrowserWindow({show:false,width:540,height:650,minWidth:540,maxWidth:540,minHeight:650,maxHeight:650,resizable:false,maximizable:false,fullscreenable:false,title:'Options',icon:appIconPath,backgroundColor:themeBg(),autoHideMenuBar:true,webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
         optionsWindow.setMenu(null);
+        optionsWindow.setResizable(false);
+        optionsWindow.setMaximizable(false);
+        optionsWindow.setFullScreenable(false);
         optionsWindow.webContents.setWindowOpenHandler(()=>({action:'deny'}));
         optionsWindow.webContents.on('will-navigate',event=>event.preventDefault());
         optionsWindow.on('closed',()=>{optionsWindow=null;});
@@ -149,8 +153,11 @@ if (process.argv.includes('--native-host')) {
       const openAddWindow = async ({ paste = false, scheduled = '' } = {}) => {
         if (schedulerWindow && !schedulerWindow.isDestroyed()) schedulerWindow.close();
         if (addWindow && !addWindow.isDestroyed()) { showProgress(addWindow); return; }
-        addWindow = new BrowserWindow({show:false,width:565,height:430,minWidth:520,minHeight:390,title:'Download File Info',icon:appIconPath,backgroundColor:'#f0f0f0',autoHideMenuBar:true,webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
+        addWindow = new BrowserWindow({show:false,width:565,height:430,minWidth:565,maxWidth:565,minHeight:430,maxHeight:430,resizable:false,maximizable:false,fullscreenable:false,title:'Download File Info',icon:appIconPath,backgroundColor:themeBg(),autoHideMenuBar:true,webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
         addWindow.setMenu(null);
+        addWindow.setResizable(false);
+        addWindow.setMaximizable(false);
+        addWindow.setFullScreenable(false);
         addWindow.webContents.setWindowOpenHandler(()=>({action:'deny'}));
         addWindow.webContents.on('will-navigate',event=>event.preventDefault());
         addWindow.on('closed',()=>{addWindow=null;});
@@ -159,8 +166,11 @@ if (process.argv.includes('--native-host')) {
       };
       const openSchedulerWindow = async () => {
         if (schedulerWindow && !schedulerWindow.isDestroyed()) { showProgress(schedulerWindow); return; }
-        schedulerWindow = new BrowserWindow({show:false,width:550,height:430,minWidth:500,minHeight:360,title:'Scheduler',icon:appIconPath,backgroundColor:'#f0f0f0',autoHideMenuBar:true,webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
+        schedulerWindow = new BrowserWindow({show:false,width:550,height:430,minWidth:550,maxWidth:550,minHeight:430,maxHeight:430,resizable:false,maximizable:false,fullscreenable:false,title:'Scheduler',icon:appIconPath,backgroundColor:themeBg(),autoHideMenuBar:true,webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
         schedulerWindow.setMenu(null);
+        schedulerWindow.setResizable(false);
+        schedulerWindow.setMaximizable(false);
+        schedulerWindow.setFullScreenable(false);
         schedulerWindow.webContents.setWindowOpenHandler(()=>({action:'deny'}));
         schedulerWindow.webContents.on('will-navigate',event=>event.preventDefault());
         schedulerWindow.on('closed',()=>{schedulerWindow=null;});
@@ -173,13 +183,50 @@ if (process.argv.includes('--native-host')) {
           const d=engine.downloads.find(d=>d.id===id); if(!d)throw new Error('Download not found.');
           if(progressWindows.has(id)){
             const existing=progressWindows.get(id);
-            if(!d.needsReview&&existing.getSize()[1]<440){existing.setMinimumSize(540,440);existing.setSize(565,485,true);}
+            if(!d.needsReview&&existing.getSize()[1]<440){
+              existing.setMinimumSize(565,485);
+              existing.setMaximumSize(565,485);
+              existing.setSize(565,485,true);
+              existing.setResizable(false);
+              existing.setMaximizable(false);
+              existing.setFullScreenable(false);
+            }
             showProgress(existing);return;
           }
           const reviewWindow=d.needsReview===true;
-          const progress=new BrowserWindow({width:565,height:reviewWindow?365:485,minWidth:540,minHeight:reviewWindow?330:440,title:d.filename,icon:appIconPath,backgroundColor:'#f0f0f0',autoHideMenuBar:true,webPreferences:{preload:path.join(__dirname,'preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
-          progress.setMenu(null);progressWindows.set(id,progress);progressWindowSizes.set(progress,{expanded:{width:565,height:485}});
-          if(d.status==='complete'){progress.setMinimumSize(470,270);progress.setSize(480,280);progress.setTitle('Download complete');}
+          const targetW = 565;
+          const targetH = reviewWindow ? 365 : 485;
+          const progress=new BrowserWindow({
+            width: targetW,
+            height: targetH,
+            minWidth: targetW,
+            maxWidth: targetW,
+            minHeight: targetH,
+            maxHeight: targetH,
+            resizable: false,
+            maximizable: false,
+            fullscreenable: false,
+            title: d.filename,
+            icon: appIconPath,
+            backgroundColor: themeBg(),
+            autoHideMenuBar: true,
+            webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true }
+          });
+          progress.setMenu(null);
+          progress.setResizable(false);
+          progress.setMaximizable(false);
+          progress.setFullScreenable(false);
+          progressWindows.set(id,progress);
+          progressWindowSizes.set(progress,{expanded:{width:565,height:485}});
+          if(d.status==='complete'){
+            progress.setMinimumSize(480,280);
+            progress.setMaximumSize(480,280);
+            progress.setSize(480,280);
+            progress.setResizable(false);
+            progress.setMaximizable(false);
+            progress.setFullScreenable(false);
+            progress.setTitle('Download complete');
+          }
           progress.on('close',async event=>{
             if(progressClosing.has(progress))return;
             if(progressClosePrompts.has(progress)){event.preventDefault();return;}
@@ -215,6 +262,7 @@ if (process.argv.includes('--native-host')) {
         },
         add: data => engine.add(data),
         review: data => engine.reviewDownload(data),
+        refreshUrl: data => engine.refreshUrl(data),
         action: async ({ id, action }) => {
           const d = engine.downloads.find(d => d.id === id);
           if (!d) throw new Error('Download not found.');
@@ -228,7 +276,17 @@ if (process.argv.includes('--native-host')) {
           } else if (action === 'reveal') { if (d.path) shell.showItemInFolder(d.path); else await shell.openPath(d.directory); }
           else return engine.action(id, action);
         },
-        settings: async data => { const result = await engine.updateSettings(data); syncStartupSetting(); return result; },
+        settings: async data => {
+          const result = await engine.updateSettings(data);
+          syncStartupSetting();
+          const bg = themeBg();
+          for (const win of [window, integrationWindow, optionsWindow, addWindow, schedulerWindow, ...progressWindows.values()]) {
+            if (win && !win.isDestroyed()) {
+              try { win.setBackgroundColor(bg); } catch {}
+            }
+          }
+          return result;
+        },
         chooseDirectory: async (_data, senderWindow) => {
           const result = await dialog.showOpenDialog(senderWindow || window, { properties: ['openDirectory', 'createDirectory'] });
           return result.canceled ? null : result.filePaths[0];
@@ -273,9 +331,9 @@ if (process.argv.includes('--native-host')) {
         return handler(data, BrowserWindow.fromWebContents(event.sender));
       });
       ipcMain.handle('downloader:closeProgress',event=>{if(integrationWindow&&!integrationWindow.isDestroyed()&&event.senderFrame===integrationWindow.webContents.mainFrame){integrationWindow.close();return;}if(optionsWindow&&!optionsWindow.isDestroyed()&&event.senderFrame===optionsWindow.webContents.mainFrame){optionsWindow.close();return;}if(addWindow&&!addWindow.isDestroyed()&&event.senderFrame===addWindow.webContents.mainFrame){addWindow.close();return;}if(schedulerWindow&&!schedulerWindow.isDestroyed()&&event.senderFrame===schedulerWindow.webContents.mainFrame){schedulerWindow.close();return;}for(const progress of progressWindows.values())if(event.senderFrame===progress.webContents.mainFrame){progress.close();break;}});
-      ipcMain.handle('downloader:resizeProgress',(event,{expanded}={})=>{for(const progress of progressWindows.values())if(event.senderFrame===progress.webContents.mainFrame){const remembered=progressWindowSizes.get(progress)||{expanded:{width:565,height:485}},[width,height]=progress.getSize();if(expanded){progress.setMinimumSize(540,440);progress.setSize(Math.max(540,remembered.expanded.width),Math.max(440,remembered.expanded.height),true);}else{if(height>360)remembered.expanded={width,height};progressWindowSizes.set(progress,remembered);progress.setMinimumSize(540,325);progress.setSize(Math.max(540,width),340,true);}return;}});
-      window = new BrowserWindow({ show: !browserSetupRequested && !process.argv.includes('--browser-download') && !process.argv.includes('--background'), width: 805, height: 465, minWidth: 760, minHeight: 450,
-        title: 'Awesome Downloader', icon: appIconPath, backgroundColor: '#f0f0f0', autoHideMenuBar: false,
+      ipcMain.handle('downloader:resizeProgress',(event,{expanded}={})=>{for(const progress of progressWindows.values())if(event.senderFrame===progress.webContents.mainFrame){const remembered=progressWindowSizes.get(progress)||{expanded:{width:565,height:485}},[width,height]=progress.getSize();if(expanded){const targetH=Math.max(360,remembered.expanded?.height||485);progress.setMinimumSize(565,targetH);progress.setMaximumSize(565,targetH);progress.setSize(565,targetH,true);}else{if(height>360)remembered.expanded={width:565,height};progressWindowSizes.set(progress,remembered);progress.setMinimumSize(565,320);progress.setMaximumSize(565,320);progress.setSize(565,320,true);}progress.setResizable(false);progress.setMaximizable(false);progress.setFullScreenable(false);return;}});
+      window = new BrowserWindow({ show: !browserSetupRequested && !process.argv.includes('--browser-download') && !process.argv.includes('--background'), width: 805, height: 465, minWidth: 420, minHeight: 340,
+        title: 'Awesome Downloader', icon: appIconPath, backgroundColor: themeBg(), autoHideMenuBar: true,
         webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true } });
       window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
       window.webContents.on('will-navigate', event => event.preventDefault());
@@ -315,17 +373,32 @@ if (process.argv.includes('--native-host')) {
         if (addWindow && !addWindow.isDestroyed()) addWindow.webContents.send('downloader:change',data);
         if (schedulerWindow && !schedulerWindow.isDestroyed()) schedulerWindow.webContents.send('downloader:change',data);
         for(const [id,progress] of progressWindows){
+          if(!progress || progress.isDestroyed()) continue;
           const d=data.downloads.find(d=>d.id===id);
-          if(closeCancelledProgress(progress,d))continue;
-          progress.setTitle(d.needsReview?'Download File Info':d.status==='complete'?'Download complete':`${d.total?Math.floor(d.downloaded/d.total*100)+'% ':''}${d.filename}`);
-          progress.webContents.send('downloader:change',data);
+          if(!d || closeCancelledProgress(progress,d))continue;
+          try {
+            progress.setTitle(d.needsReview?'Download File Info':d.status==='complete'?'Download complete':`${d.total?Math.floor(d.downloaded/d.total*100)+'% ':''}${d.filename}`);
+            progress.webContents.send('downloader:change',data);
+          } catch {}
         }
       });
       engine.on('complete', d => {
         const progress=progressWindows.get(d.id);
-        if(progress&&!progress.isDestroyed()){if(engine.settings.hideCompletionDialog)progress.close();else{progress.setMinimumSize(470,270);progress.setSize(480,280);progress.setTitle('Download complete');}}
+        if(progress&&!progress.isDestroyed()){if(engine.settings.hideCompletionDialog)progress.close();else{progress.setMinimumSize(480,280);progress.setMaximumSize(480,280);progress.setSize(480,280);progress.setResizable(false);progress.setMaximizable(false);progress.setFullScreenable(false);progress.setTitle('Download complete');}}
         if (engine.settings.notifyOnComplete && Notification.isSupported()) new Notification({ title: 'Download complete', body: d.filename }).show();
         if (engine.settings.revealOnComplete && d.path) shell.showItemInFolder(d.path);
+        if (engine.settings.postCompleteAction && engine.settings.postCompleteAction !== 'none') {
+          const unfinished = engine.downloads.filter(item => ['connecting', 'downloading', 'assembling', 'queued', 'scheduled'].includes(item.status));
+          if (!unfinished.length) {
+            const action = engine.settings.postCompleteAction;
+            engine.updateSettings({ postCompleteAction: 'none' }).catch(() => {});
+            if (action === 'shutdown') {
+              require('node:child_process').execFile('shutdown.exe', ['/s', '/t', '60', '/c', 'Awesome Downloader completed all downloads. Shutting down in 60 seconds.'], { windowsHide: true }, () => {});
+            } else if (action === 'sleep') {
+              require('node:child_process').execFile('rundll32.exe', ['powrprof.dll,SetSuspendState', '0,1,0'], { windowsHide: true }, () => {});
+            }
+          }
+        }
       });
       const icon = nativeImage.createFromPath(appIconPath).resize({width:16,height:16});
       tray = new Tray(icon);

@@ -47,7 +47,7 @@ async function writeReadable(readable,file,signal,onChunk) {
     await output.sync();
   } finally {reader.releaseLock();await output.close();}
 }
-export async function downloadSabr({session,headers={},videoPath,audioPath,signal,onProgress=()=>{}}) {
+export async function downloadSabr({session,headers={},videoPath,audioPath,signal,throttle,onProgress=()=>{}}) {
   const selected=normalizeSabrSession(session);
   let networkDownloaded=0,downloaded=0;
   const tracks={};
@@ -60,7 +60,10 @@ export async function downloadSabr({session,headers={},videoPath,audioPath,signa
     for(const [name,value] of Object.entries(commonHeaders))if(!merged.has(name))merged.set(name,value);
     const response=await fetch(input,{...init,headers:merged,redirect:'follow'});
     if(!response.body||!response.ok)return response;
-    const body=response.body.pipeThrough(new TransformStream({transform(chunk,controller){networkDownloaded+=chunk.byteLength;report();controller.enqueue(chunk);}}));
+    const body=response.body.pipeThrough(new TransformStream({async transform(chunk,controller){
+      if(typeof throttle==='function')await throttle(chunk.byteLength,signal);
+      networkDownloaded+=chunk.byteLength;report();controller.enqueue(chunk);
+    }}));
     return new Response(body,{status:response.status,statusText:response.statusText,headers:response.headers});
   };
   const sabr=new SabrStream({

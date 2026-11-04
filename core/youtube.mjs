@@ -16,14 +16,14 @@ export function youtubeUrl(value) {
 export function choicesFromInfo(info,url) {
   if(info.is_live||info.live_status==='is_live')throw new Error('Live YouTube streams are not supported yet.');
   const formats=(info.formats||[]).filter(f=>!f.has_drm&&f.url&&['https','http','m3u8_native','m3u8'].includes(f.protocol));
-  const audios=formats.filter(f=>f.vcodec==='none'&&f.acodec!=='none'&&f.ext==='m4a'&&!String(f.format_id).includes('drc')).sort((a,b)=>(b.abr||0)-(a.abr||0));
+  const audios=formats.filter(f=>f.vcodec==='none'&&f.acodec!=='none'&&['m4a','webm'].includes(f.ext)&&!String(f.format_id).includes('drc')).sort((a,b)=>((b.ext==='m4a'?1000:0)+(b.abr||0))-((a.ext==='m4a'?1000:0)+(a.abr||0)));
   const audio=audios[0];
   const groups=new Map();
-  for(const f of formats.filter(f=>f.vcodec&&f.vcodec!=='none'&&f.ext==='mp4'&&f.height)) {
+  for(const f of formats.filter(f=>f.vcodec&&f.vcodec!=='none'&&['mp4','webm'].includes(f.ext)&&f.height)) {
     if(f.acodec==='none'&&!audio)continue;
     const old=groups.get(f.height);
-    // Prefer a direct H.264 stream at each height for Windows compatibility.
-    const score=v=>(v.protocol==='https'?100:0)+(/^avc/.test(v.vcodec)?50:0)+(v.fps||0)/100;
+    // Prefer direct H.264/MP4 stream at each height for Windows compatibility, but include VP9/AV1 WebM for higher resolutions
+    const score=v=>(v.protocol==='https'?100:0)+(/^avc/.test(v.vcodec)?50:0)+(v.ext==='mp4'?20:0)+(v.fps||0)/100;
     if(!old||score(f)>score(old))groups.set(f.height,f);
   }
   const title=String(info.title||'YouTube video').slice(0,180);
@@ -56,7 +56,7 @@ function run(args,{signal,onLine,timeout=120000}={}) {
       else {output+=chunk;if(output.length>32*1024*1024){overflow=true;child.kill();}}
     });
     child.stderr.on('data',chunk=>{error=(error+chunk).slice(-4000);});
-    child.on('error',e=>{clearTimeout(timer);reject(e);});
+    child.on('error',e=>{clearTimeout(timer);if(e.code==='ENOENT')reject(new Error('The YouTube extractor (yt-dlp) is missing. Place yt-dlp.exe in the vendor folder or use the browser extension for video capture.'));else reject(e);});
     child.on('close',code=>{clearTimeout(timer);if(signal?.aborted)return reject(signal.reason);if(code===0&&!overflow)resolve(output);else reject(youtubeError(overflow?'YouTube response exceeded its size limit.':error));});
   });
 }
@@ -87,7 +87,8 @@ export async function downloadYoutube({url,formatKey,directory,signal,onProgress
   const audio=choice.youtubeFormat.startsWith('audio:');
   const args=['--newline','--progress','--progress-delta','0.5','--progress-template','download:ADPROGRESS:%(progress)j','--ffmpeg-location',ffmpeg.replace('app.asar','app.asar.unpacked'),'-f',audio?choice.youtubeFormat.slice(6):choice.youtubeFormat,'-o',path.join(directory,'media.%(ext)s')];
   if(speedLimitKbps)args.push('--limit-rate',String(speedLimitKbps*1024));
-  args.push(...(audio?['--extract-audio','--audio-format','mp3']:['--merge-output-format','mp4']),youtubeUrl(url));
+  const audioFormat = ['m4a', 'opus', 'mp3'].includes(choice.outputFormat) ? choice.outputFormat : 'mp3';
+  args.push(...(audio?['--extract-audio','--audio-format',audioFormat]:['--merge-output-format','mp4']),youtubeUrl(url));
   const finished=new Map();let completedBytes=0;
   await run(args,{signal,timeout:0,onLine:line=>{
     if(!line.startsWith('ADPROGRESS:'))return;

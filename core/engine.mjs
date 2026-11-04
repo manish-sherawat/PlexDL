@@ -10,7 +10,7 @@ import {streamProgress} from './stream-progress.mjs';
 import {downloadSabr,normalizeSabrSession} from './sabr.mjs';
 
 const TRANSIENT = new Set(['downloading', 'probing', 'assembling']);
-const CATEGORY = { Video: /\.(mp4|webm|mkv|mov|avi|m4v)$/i, Audio: /\.(mp3|m4a|aac|flac|ogg|wav)$/i, Archives: /\.(zip|7z|rar|tar|gz|iso)$/i, Documents: /\.(pdf|docx?|xlsx?|pptx?|txt|csv|epub)$/i, Programs: /\.(exe|msi|msix)$/i };
+const CATEGORY = { Images: /\.(jpe?g|png|gif|webp|svg|bmp|ico|tiff?|avif)$/i, Video: /\.(mp4|webm|mkv|mov|avi|m4v)$/i, Audio: /\.(mp3|m4a|aac|flac|ogg|wav)$/i, Archives: /\.(zip|7z|rar|tar|gz|iso)$/i, Documents: /\.(pdf|docx?|xlsx?|pptx?|txt|csv|epub)$/i, Programs: /\.(exe|msi|msix)$/i };
 export function safeFilename(value) {
   let name = path.win32.basename(String(value || 'download')).replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').replace(/[. ]+$/, '');
   if (name.length > 180) {
@@ -48,21 +48,27 @@ export class DownloadEngine extends EventEmitter {
     this.dataDirectory = dataDirectory;
     this.statePath = path.join(dataDirectory, 'downloads.json');
     this.partsDirectory = path.join(dataDirectory, 'parts');
-    this.settings = { defaultDirectory: downloadDirectory, maxConcurrent: 3, connections: 8, speedLimitKbps: 0, categoryDirectories: {}, notifyOnComplete: true, revealOnComplete: false, confirmBrowserDownloads: true, startWithWindows: true };
+    this.settings = { defaultDirectory: downloadDirectory, maxConcurrent: 3, connections: 8, speedLimitKbps: 0, categoryDirectories: {}, notifyOnComplete: true, revealOnComplete: false, confirmBrowserDownloads: true, startWithWindows: true, postCompleteAction: 'none', theme: 'light' };
     this.downloads = [];
     this.jobs = new Map();
     this.persistChain = Promise.resolve();
     this.tickMs = tickMs;
     this.closing = false;
     this.rateTail = Promise.resolve();
-    this.rateNext = 0;
+    this.rateTokens = 0;
+    this.rateLastRefill = Date.now();
   }
   async init() {
     await fs.mkdir(this.partsDirectory, { recursive: true });
     try {
       const state = JSON.parse(await fs.readFile(this.statePath, 'utf8'));
       this.updateSettings(state.settings || {}, false);
-      this.downloads = (state.downloads || []).map(d => ({ ...d, status: TRANSIENT.has(d.status) ? 'paused' : d.status, speed: 0 }));
+      this.downloads = (state.downloads || []).map(d => ({
+        ...d,
+        status: TRANSIENT.has(d.status) ? 'paused' : d.status,
+        speed: 0,
+        headers: cleanHeaders({ ...(d.headers || {}), ...(d.referer ? { referer: d.referer } : {}) })
+      }));
     } catch (error) { if (error.code !== 'ENOENT') throw new Error(`Could not load download history: ${error.message}`); }
     this.timer = setInterval(() => this.tick(), this.tickMs);
     this.timer.unref();
@@ -77,7 +83,15 @@ export class DownloadEngine extends EventEmitter {
         status: s.done || (s.end !== null && s.downloaded === s.end - s.start + 1) ? 'complete' : d.status })) })), settings: { ...this.settings } };
   }
   async persist() {
-    const content = JSON.stringify({ version: 1, settings: this.settings, downloads: this.downloads.map(d => ({ ...d, headers: undefined, sabr: undefined })) }, null, 2);
+    const content = JSON.stringify({ version: 1, settings: this.settings, downloads: this.downloads.map(d => {
+      let safeHeaders = d.headers ? { ...d.headers } : undefined;
+      if (safeHeaders) {
+        delete safeHeaders.cookie;
+        delete safeHeaders.authorization;
+        if (!Object.keys(safeHeaders).length) safeHeaders = undefined;
+      }
+      return { ...d, headers: safeHeaders, sabr: undefined };
+    }) }, null, 2);
     this.persistChain = this.persistChain.catch(() => {}).then(async () => {
       const temp = `${this.statePath}.tmp`;
       await fs.writeFile(temp, content, { mode: 0o600 });
@@ -109,7 +123,15 @@ export class DownloadEngine extends EventEmitter {
       }
     }
     for (const key of ['notifyOnComplete', 'revealOnComplete', 'confirmBrowserDownloads', 'hideCompletionDialog', 'startWithWindows']) if (patch[key] !== undefined) { if (typeof patch[key] !== 'boolean') throw new Error(`Invalid ${key}.`); next[key] = patch[key]; }
-    if (next.speedLimitKbps !== this.settings.speedLimitKbps) this.rateNext = 0;
+    if (patch.postCompleteAction !== undefined) {
+      if (!['none', 'shutdown', 'sleep'].includes(patch.postCompleteAction)) throw new Error('Invalid postCompleteAction.');
+      next.postCompleteAction = patch.postCompleteAction;
+    }
+    if (patch.theme !== undefined) {
+      if (!['dark', 'light', 'system'].includes(patch.theme)) throw new Error('Invalid theme.');
+      next.theme = patch.theme;
+    }
+    if (next.speedLimitKbps !== this.settings.speedLimitKbps) { this.rateTokens = 0; this.rateLastRefill = Date.now(); }
     this.settings = next;
     if (save) return this.persist().then(() => { this.changed(); this.tick(); return this.snapshot(); });
   }
@@ -118,7 +140,7 @@ export class DownloadEngine extends EventEmitter {
     if (!Array.isArray(source) || !source.length || source.length > 500) throw new Error('Add between 1 and 500 download URLs.');
     const normalized = source.map(validUrl);
     if(youtubeFormat!==undefined&&(!/^(?:audio:)?[\w-]+(?:\+[\w-]+)?$/.test(youtubeFormat)||youtubeFormat.length>80||normalized.some(u=>!youtubeUrl(u))))throw new Error('Invalid YouTube format.');
-    if(outputFormat!==undefined&&!['mp4','mp3'].includes(outputFormat))throw new Error('Invalid output format.');
+    if(outputFormat!==undefined&&!['mp4','mp3','m4a','opus'].includes(outputFormat))throw new Error('Invalid output format.');
     const sabrSession=sabr===undefined?undefined:normalizeSabrSession(sabr);
     if(sabrSession&&normalized.length!==1)throw new Error('A SABR session requires exactly one YouTube stream.');
     const audio = audioUrl ? validUrl(audioUrl) : undefined;
@@ -141,6 +163,7 @@ export class DownloadEngine extends EventEmitter {
         status: queueOnly || reviewOnly ? 'paused' : when && when > Date.now() ? 'scheduled' : 'queued', needsReview: reviewOnly, scheduledAt: when ? new Date(when).toISOString() : null,
         downloaded: 0, total: null, speed: 0, connections: 0, error: null, path: null,
         directory: directory || this.settings.categoryDirectories[selectedCategory] || this.settings.defaultDirectory, createdAt: new Date().toISOString(), segments: [], validator: null,
+        referer: referer || headers?.referer || undefined,
         headers: cleanHeaders({ ...headers, ...(referer ? { referer } : {}) }) };
     });
     this.downloads.push(...added);
@@ -148,7 +171,7 @@ export class DownloadEngine extends EventEmitter {
     this.changed(); this.tick();
     return added.map(d => d.id);
   }
-  async reviewDownload({ id, filename, directory, category, description = '', queueOnly = false, scheduledAt } = {}) {
+  async reviewDownload({ id, filename, directory, category, description = '', queueOnly = false, scheduledAt, headers } = {}) {
     const d = this.downloads.find(d => d.id === id);
     if (!d?.needsReview || this.jobs.has(id)) throw new Error('This download is not waiting for confirmation.');
     if (directory !== undefined && (typeof directory !== 'string' || !path.isAbsolute(directory))) throw new Error('Choose an absolute save folder.');
@@ -159,9 +182,32 @@ export class DownloadEngine extends EventEmitter {
     if (filename) { d.explicitFilename ||= filename !== d.filename; d.filename = safeFilename(filename); }
     if (category) { d.category = category; d.explicitCategory = true; }
     if (directory) d.directory = path.resolve(directory);
+    if (headers && typeof headers === 'object') {
+      d.headers = cleanHeaders({ ...(d.headers || {}), ...headers });
+    }
     d.description = description; d.needsReview = false; d.scheduledAt = when ? new Date(when).toISOString() : null;
     d.status = queueOnly ? 'paused' : when && when > Date.now() ? 'scheduled' : 'queued';
     await this.persist(); this.changed(); this.tick();
+    return [d.id];
+  }
+  async refreshUrl({ id, url, headers = {} } = {}) {
+    const d = this.downloads.find(item => item.id === id);
+    if (!d) throw new Error('Download not found.');
+    if (this.jobs.has(id)) throw new Error('Pause the download before refreshing its address.');
+    const valid = validUrl(url);
+    const cleaned = cleanHeaders({ ...headers });
+    const info = await probe(valid, cleaned);
+    if (d.total !== null && info.total !== null && d.total !== info.total) {
+      throw new Error(`The new address points to a different file size (${info.total} bytes vs original ${d.total} bytes).`);
+    }
+    d.url = valid;
+    if (Object.keys(cleaned).length) d.headers = cleaned;
+    if (info.validator) d.validator = info.validator;
+    d.error = null;
+    d.notice = 'Download address updated. Ready to resume.';
+    d.status = 'paused';
+    await this.persist();
+    this.changed();
     return [d.id];
   }
   async action(id, action) {
@@ -198,16 +244,29 @@ export class DownloadEngine extends EventEmitter {
           d.speed = 0;
           // Keep the job owned until all cleanup and its final checkpoint finish.
           try { await this.persist(); } catch (error) { d.status = 'error'; d.error = `History checkpoint failed: ${error.message}`; }
-          this.jobs.delete(d.id); if (!this.jobs.size) this.rateNext = 0; this.changed(); this.tick();
+          this.jobs.delete(d.id); if (!this.jobs.size) { this.rateTokens = 0; this.rateLastRefill = Date.now(); } this.changed(); this.tick();
         });
       }
     }
   }
   async throttle(bytes, signal) {
-    if (!this.settings.speedLimitKbps) return;
-    const wait = Math.max(0, this.rateNext - Date.now());
-    this.rateNext = Math.max(Date.now(), this.rateNext) + bytes * 1000 / (this.settings.speedLimitKbps * 1024);
-    if (wait) await delay(wait, undefined, { signal });
+    if (!this.settings.speedLimitKbps || bytes <= 0) return;
+    const rate = (this.settings.speedLimitKbps * 1024) / 1000;
+    const burstCapacity = Math.max(64 * 1024, Math.min(1024 * 1024, rate * 250));
+    const now = Date.now();
+    const elapsed = Math.max(0, now - this.rateLastRefill);
+    this.rateLastRefill = now;
+    this.rateTokens = Math.min(burstCapacity, this.rateTokens + elapsed * rate);
+
+    if (this.rateTokens >= bytes) {
+      this.rateTokens -= bytes;
+      return;
+    }
+    const deficit = bytes - this.rateTokens;
+    this.rateTokens -= bytes;
+    if (this.rateTokens < -burstCapacity * 2) this.rateTokens = -burstCapacity * 2;
+    const wait = Math.ceil(deficit / rate);
+    if (wait > 0) await delay(wait, undefined, { signal });
   }
   async run(d, signal) {
     d.status = 'probing'; d.error = null; d.notice = null; this.changed();
@@ -233,15 +292,17 @@ export class DownloadEngine extends EventEmitter {
     const dir = path.join(this.partsDirectory, d.id);
     await fs.mkdir(dir, { recursive: true });
     // Resume only when both resource identity and range support can be established.
-    if (!info.ranges || !info.validator || d.validator !== info.validator || d.total !== info.total) {
+    const resourceChanged = (d.validator && info.validator && d.validator !== info.validator) || (d.total !== null && info.total !== null && d.total !== info.total);
+    const unidentifiable = !info.validator && !d.validator && (info.total === null || d.total === null);
+    if (!info.ranges || resourceChanged || unidentifiable) {
       if (d.segments.some(s => s.downloaded > 0)) d.notice = `${!info.ranges ? 'The server does not support resuming'
-        : !info.validator ? 'The server does not identify the file version' : 'The file changed on the server'}; restarted from the beginning.`;
+        : unidentifiable ? 'The server does not identify the file version' : 'The file changed on the server'}; restarted from the beginning.`;
       await fs.rm(dir, { recursive: true, force: true });
       await fs.mkdir(dir, { recursive: true });
       d.segments = [];
     }
     d.total = info.total; d.validator = info.validator;
-    d.resumable = Boolean(info.ranges && info.validator);
+    d.resumable = Boolean(info.ranges && (info.validator || info.total !== null));
     const count = info.ranges && info.total > 1024 * 1024 ? Math.min(this.settings.connections, Math.ceil(info.total / (512 * 1024))) : 1;
     if (!d.segments.length) {
       d.segments = Array.from({ length: count }, (_, i) => ({ start: info.total === null ? 0 : Math.floor(info.total * i / count),
@@ -277,7 +338,7 @@ export class DownloadEngine extends EventEmitter {
       const {convertMedia}=await import('./mux.mjs');
       const output=await convertMedia(dir,files,d.outputFormat,signal);
       d.filename=safeFilename(d.filename.replace(/\.[^.]+$/,'')+'.'+d.outputFormat);
-      if(!d.explicitCategory)d.category=d.outputFormat==='mp3'?'Audio':'Video';
+      if(!d.explicitCategory)d.category=['mp3','m4a','opus'].includes(d.outputFormat)?'Audio':'Video';
       return this.assemble(d,dir,signal,[output],true);
     }
     await fs.mkdir(d.directory, { recursive: true });
@@ -291,14 +352,30 @@ export class DownloadEngine extends EventEmitter {
     if (!out) throw new Error('Could not choose a free output filename.');
     let complete = false;
     try {
-      for (const file of files) {
-        const input = await fs.open(file, 'r');
+      if (files.length === 1) {
+        await out.close();
+        out = null;
         try {
-          for await (const chunk of input.createReadStream()) { signal.throwIfAborted(); await out.writeFile(chunk); }
-        } finally { await input.close(); }
+          await fs.rename(files[0], destination);
+          complete = true;
+        } catch (err) {
+          if (err.code === 'EXDEV') {
+            await fs.copyFile(files[0], destination);
+            await fs.unlink(files[0]).catch(() => {});
+            complete = true;
+          } else throw err;
+        }
+      } else {
+        for (const file of files) {
+          const input = await fs.open(file, 'r');
+          try {
+            for await (const chunk of input.createReadStream()) { signal.throwIfAborted(); await out.writeFile(chunk); }
+          } finally { await input.close(); }
+          await fs.unlink(file).catch(() => {});
+        }
+        await out.sync(); complete = true;
       }
-      await out.sync(); complete = true;
-    } finally { await out.close(); if (!complete) await fs.unlink(destination); }
+    } finally { if (out) await out.close(); if (!complete) await fs.unlink(destination).catch(() => {}); }
     d.path = destination; d.filename = path.basename(destination); d.status = 'complete';
     d.completedAt = new Date().toISOString();
     await this.persist();
@@ -403,7 +480,7 @@ export class DownloadEngine extends EventEmitter {
     let networkDownloaded=0,last=0,at=Date.now();const timer=setInterval(()=>{const now=Date.now();d.speed=(networkDownloaded-last)*1000/Math.max(1,now-at);last=networkDownloaded;at=now;this.changed();},this.tickMs);
     let result;
     try{
-      result=await downloadSabr({session:selected,headers,videoPath:path.join(dir,'0.part'),audioPath:path.join(dir,hasVideo?'1.part':'0.part'),signal,onProgress:progress=>{
+      result=await downloadSabr({session:selected,headers,videoPath:path.join(dir,'0.part'),audioPath:path.join(dir,hasVideo?'1.part':'0.part'),signal,throttle:(bytes,sig)=>this.throttle(bytes,sig),onProgress:progress=>{
         d.downloaded=progress.downloaded;if(progress.total!==null)d.total=progress.total;
         networkDownloaded=progress.networkDownloaded;
         for(let i=0;i<d.segments.length;i++)d.segments[i].downloaded=progress.tracks[picked[i].itag]||0;
