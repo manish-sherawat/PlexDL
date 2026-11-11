@@ -26,7 +26,7 @@
     "build:dir": "electron-builder --win dir"
   },
   "devDependencies": {
-    "electron": "44.9.1",
+    "electron": "45.2.3",
     "electron-builder": "26.18.1",
     "playwright": "^1.58.2"
   },
